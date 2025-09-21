@@ -84,54 +84,20 @@ def scrape_cme_gold():
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1',
         }
-        
         print("Fetching CME website...")
         response = requests.get(TARGET_URL, headers=headers, timeout=15)
         print(f"Response status: {response.status_code}")
-        
         if response.status_code != 200:
             raise Exception(f"Failed to fetch page: {response.status_code}")
-        
         soup = BeautifulSoup(response.text, 'html.parser')
         print("Page parsed successfully")
-        
-        # Since the page is heavily JavaScript-based, we'll use the real data you provided
-        # This is the actual data from the CME Gold volume page as of your last check
-        real_data = {
-            'last_updated_ct': '20 Sep 2025 12:20:14 AM CT',
-            'totals_globex': 206620,
-            'totals_open_outcry': 0,
-            'totals_pnt_clearport': 1367,
-            'totals_total_volume': 207987,
-            'totals_block_trades': 317,
-            'totals_efp': 1050,
-            'totals_efr': 0,
-            'totals_tas': 909,
-            'totals_deliveries': 56,
-            'totals_at_close': 534274,
-            'totals_change': 18662
-        }
-        
-        print(f"Using real CME data: {real_data['totals_total_volume']} total volume")
-        return real_data
-        
+        # TODO: Implement real scraping logic here
+        # If scraping fails to find expected data, raise Exception
+        # For now, raise Exception to simulate failure (since page is JS-based)
+        raise Exception("Failed to parse real data from CME website (JS-based page)")
     except Exception as e:
         print(f"Scraping error: {str(e)}")
-        # Fallback to the real data you provided
-        return {
-            'last_updated_ct': '20 Sep 2025 12:20:14 AM CT',
-            'totals_globex': 206620,
-            'totals_open_outcry': 0,
-            'totals_pnt_clearport': 1367,
-            'totals_total_volume': 207987,
-            'totals_block_trades': 317,
-            'totals_efp': 1050,
-            'totals_efr': 0,
-            'totals_tas': 909,
-            'totals_deliveries': 56,
-            'totals_at_close': 534274,
-            'totals_change': 18662
-        }
+        raise
 
 # Routes
 @app.route('/')
@@ -159,7 +125,6 @@ def scrape():
         last_row = get_last_row()
         is_new = True
         if last_row:
-            # Compare all relevant fields
             last_data = {
                 'last_updated_ct': last_row[1],
                 'totals_globex': last_row[2],
@@ -174,7 +139,6 @@ def scrape():
                 'totals_at_close': last_row[11],
                 'totals_change': last_row[12]
             }
-            # If all values match, do not insert
             is_new = any(data[k] != last_data[k] for k in last_data)
         if is_new:
             insert_row(data)
@@ -182,29 +146,34 @@ def scrape():
             'ok': True,
             'data': data,
             'inserted': is_new,
-            'timestamp': datetime.now().isoformat()
+            'timestamp': datetime.now().isoformat(),
+            'source_url': TARGET_URL
         })
     except Exception as e:
         return jsonify({
             'ok': False,
             'error': str(e),
-            'timestamp': datetime.now().isoformat()
+            'timestamp': datetime.now().isoformat(),
+            'source_url': TARGET_URL
         }), 500
 
 @app.route('/view')
 def view():
     """Scrape CME Gold data and return HTML view"""
     try:
-        trade_date = request.args.get('tradeDate')
-        data = scrape_cme_gold(trade_date)
-        
-        # HTML template
+        # Only show the source URL and error if scraping fails
+        data = None
+        error = None
+        try:
+            data = scrape_cme_gold()
+        except Exception as e:
+            error = str(e)
         html_template = """
         <!DOCTYPE html>
         <html>
         <head>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <meta charset=\"utf-8\">
+            <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
             <title>CME Gold Volume (Totals)</title>
             <style>
                 body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; padding: 16px; max-width: 1200px; margin: 0 auto; }
@@ -220,37 +189,36 @@ def view():
         </head>
         <body>
             <h2>CME Gold Volume (Totals)</h2>
-            <p><strong>URL:</strong> <code>{{ data.url }}</code></p>
-            <p><strong>Data Type:</strong> <b>{{ data.data_type or 'N/A' }}</b> | 
-               <strong>Last Updated (CT):</strong> <b>{{ data.last_updated_ct or 'N/A' }}</b> | 
-               <strong>Trade Date:</strong> <b>{{ data.trade_date or 'N/A' }}</b></p>
-            <table>
-                <thead>
-                    <tr><th>Field</th><th>Value</th></tr>
-                </thead>
-                <tbody>
-                    <tr><td>Globex</td><td>{{ data.totals_globex or 'N/A' }}</td></tr>
-                    <tr><td>Open Outcry</td><td>{{ data.totals_open_outcry or 'N/A' }}</td></tr>
-                    <tr><td>PNT/ClearPort</td><td>{{ data.totals_pnt_clearport or 'N/A' }}</td></tr>
-                    <tr><td>Total Volume</td><td>{{ data.totals_total_volume or 'N/A' }}</td></tr>
-                    <tr><td>Block Trades</td><td>{{ data.totals_block_trades or 'N/A' }}</td></tr>
-                    <tr><td>EFP</td><td>{{ data.totals_efp or 'N/A' }}</td></tr>
-                    <tr><td>EFR</td><td>{{ data.totals_efr or 'N/A' }}</td></tr>
-                    <tr><td>TAS</td><td>{{ data.totals_tas or 'N/A' }}</td></tr>
-                    <tr><td>Deliveries</td><td>{{ data.totals_deliveries or 'N/A' }}</td></tr>
-                    <tr><td>At Close</td><td>{{ data.totals_at_close or 'N/A' }}</td></tr>
-                    <tr><td>Change</td><td>{{ data.totals_change or 'N/A' }}</td></tr>
-                </tbody>
-            </table>
-            <p style="margin-top: 30px; font-size: 12px; color: #999;">
+            <p><strong>Website Source:</strong> <code>{{ source_url }}</code></p>
+            {% if error %}
+                <p style=\"color:red;\"><b>Error:</b> {{ error }}</p>
+            {% elif data %}
+                <table>
+                    <thead>
+                        <tr><th>Field</th><th>Value</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>Globex</td><td>{{ data.totals_globex or 'N/A' }}</td></tr>
+                        <tr><td>Open Outcry</td><td>{{ data.totals_open_outcry or 'N/A' }}</td></tr>
+                        <tr><td>PNT/ClearPort</td><td>{{ data.totals_pnt_clearport or 'N/A' }}</td></tr>
+                        <tr><td>Total Volume</td><td>{{ data.totals_total_volume or 'N/A' }}</td></tr>
+                        <tr><td>Block Trades</td><td>{{ data.totals_block_trades or 'N/A' }}</td></tr>
+                        <tr><td>EFP</td><td>{{ data.totals_efp or 'N/A' }}</td></tr>
+                        <tr><td>EFR</td><td>{{ data.totals_efr or 'N/A' }}</td></tr>
+                        <tr><td>TAS</td><td>{{ data.totals_tas or 'N/A' }}</td></tr>
+                        <tr><td>Deliveries</td><td>{{ data.totals_deliveries or 'N/A' }}</td></tr>
+                        <tr><td>At Close</td><td>{{ data.totals_at_close or 'N/A' }}</td></tr>
+                        <tr><td>Change</td><td>{{ data.totals_change or 'N/A' }}</td></tr>
+                    </tbody>
+                </table>
+            {% endif %}
+            <p style=\"margin-top: 30px; font-size: 12px; color: #999;\">
                 Last updated: {{ timestamp }}
             </p>
         </body>
         </html>
         """
-        
-        return render_template_string(html_template, data=data, timestamp=datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
-        
+        return render_template_string(html_template, data=data, error=error, source_url=TARGET_URL, timestamp=datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
     except Exception as e:
         return f"<h1>Error</h1><p>{str(e)}</p>", 500
 
