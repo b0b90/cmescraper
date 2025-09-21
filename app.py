@@ -22,7 +22,7 @@ app = Flask(__name__)
 
 # CME Gold Volume URL
 TARGET_URL = 'https://www.cmegroup.com/markets/metals/precious/gold.volume.html'
-DB_PATH = 'cme_gold_volume.db'
+DB_PATH = 'cme_gold_volume_new.db'
 
 def parse_int_or_none(text):
     """Parse text to integer, return None if invalid"""
