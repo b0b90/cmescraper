@@ -11,6 +11,12 @@ import sqlite3
 from datetime import datetime
 import re
 import os
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+import time
 
 app = Flask(__name__)
 
@@ -73,65 +79,230 @@ def insert_row(data):
     conn.close()
 
 def scrape_cme_gold():
-    """Scrape CME Gold Volume data - using real data from CME website"""
+    """Scrape CME Gold Volume data - LIVE SCRAPING with Selenium"""
+    driver = None
     try:
-        # Headers to mimic a real browser
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-        }
+        print("Starting Selenium WebDriver...")
         
-        print("Fetching CME website...")
-        response = requests.get(TARGET_URL, headers=headers, timeout=15)
-        print(f"Response status: {response.status_code}")
+        # Set up Chrome options for headless browsing
+        chrome_options = Options()
+        chrome_options.add_argument('--headless')  # Run in background
+        chrome_options.add_argument('--no-sandbox')
+        chrome_options.add_argument('--disable-dev-shm-usage')
+        chrome_options.add_argument('--disable-gpu')
+        chrome_options.add_argument('--window-size=1920,1080')
+        chrome_options.add_argument('--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
         
-        if response.status_code != 200:
-            raise Exception(f"Failed to fetch page: {response.status_code}")
+        # Initialize the driver
+        driver = webdriver.Chrome(options=chrome_options)
         
-        soup = BeautifulSoup(response.text, 'html.parser')
-        print("Page parsed successfully")
+        print("Loading CME website...")
+        driver.get(TARGET_URL)
         
-        # Since the page is heavily JavaScript-based, we'll use the real data you provided
-        # This is the actual data from the CME Gold volume page as of your last check
-        real_data = {
-            'last_updated_ct': '20 Sep 2025 12:20:14 AM CT',
-            'totals_globex': 206620,
-            'totals_open_outcry': 0,
-            'totals_pnt_clearport': 1367,
-            'totals_total_volume': 207987,
-            'totals_block_trades': 317,
-            'totals_efp': 1050,
-            'totals_efr': 0,
-            'totals_tas': 909,
-            'totals_deliveries': 56,
-            'totals_at_close': 534274,
-            'totals_change': 18662
-        }
+        # Wait for the page to load and JavaScript to execute
+        print("Waiting for page to load...")
+        time.sleep(10)  # Give time for JavaScript to load data
         
-        print(f"Using real CME data: {real_data['totals_total_volume']} total volume")
-        return real_data
+        # Try to find the data using various selectors
+        data = {}
+        
+        # Look for common CME data selectors
+        selectors_to_try = [
+            # Try to find totals data
+            ('[data-field*="totals"]', 'data-field'),
+            ('.totals', 'class'),
+            ('[class*="total"]', 'class'),
+            ('[id*="total"]', 'id'),
+            # Look for specific volume data
+            ('[data-field*="globex"]', 'data-field'),
+            ('[data-field*="volume"]', 'data-field'),
+            # Look for table cells with numbers
+            ('td[data-field]', 'data-field'),
+            ('span[data-field]', 'data-field'),
+            ('div[data-field]', 'data-field'),
+        ]
+        
+        print("Searching for data elements...")
+        for selector, attr in selectors_to_try:
+            try:
+                elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                if elements:
+                    print(f"Found {len(elements)} elements with selector: {selector}")
+                    for element in elements:
+                        try:
+                            text = element.text.strip()
+                            field_name = element.get_attribute(attr)
+                            if text and field_name:
+                                print(f"  {field_name}: {text}")
+                                # Try to extract numbers
+                                numbers = re.findall(r'\d{1,3}(?:,\d{3})*', text)
+                                if numbers:
+                                    data[field_name] = text
+                        except:
+                            continue
+            except Exception as e:
+                print(f"Error with selector {selector}: {e}")
+                continue
+        
+        # Look for any table with financial data
+        print("Looking for tables...")
+        tables = driver.find_elements(By.TAG_NAME, 'table')
+        print(f"Found {len(tables)} tables")
+        
+        for i, table in enumerate(tables):
+            try:
+                rows = table.find_elements(By.TAG_NAME, 'tr')
+                print(f"Table {i+1} has {len(rows)} rows")
+                
+                for j, row in enumerate(rows[:10]):  # Check first 10 rows
+                    try:
+                        cells = row.find_elements(By.TAG_NAME, 'td')
+                        if cells:
+                            row_text = ' '.join([cell.text.strip() for cell in cells])
+                            if any(keyword in row_text.lower() for keyword in ['volume', 'globex', 'total', 'gold', 'trades']):
+                                print(f"  Row {j+1}: {row_text}")
+                                
+                                # Try to extract numbers from this row
+                                numbers = re.findall(r'\d{1,3}(?:,\d{3})*', row_text)
+                                if numbers:
+                                    print(f"    Numbers found: {numbers}")
+                    except:
+                        continue
+            except:
+                continue
+        
+        # Look for any elements containing large numbers (likely volume data)
+        print("Looking for large numbers...")
+        all_elements = driver.find_elements(By.XPATH, "//*[contains(text(), ',')]")
+        for element in all_elements:
+            try:
+                text = element.text.strip()
+                if re.match(r'^\d{1,3}(?:,\d{3})+$', text):  # Numbers with commas
+                    print(f"Found large number: {text}")
+            except:
+                continue
+        
+        # Look for the specific CME data pattern we found
+        print("Looking for CME data pattern...")
+        cme_data_found = False
+        
+        # First, try to find the actual "Last Updated" timestamp
+        last_updated_ct = None
+        try:
+            # Look for the timestamp in the data-information section
+            timestamp_elements = driver.find_elements(By.CSS_SELECTOR, '.data-information .timestamp .date')
+            if timestamp_elements:
+                last_updated_ct = timestamp_elements[0].text.strip()
+                print(f"Found actual timestamp: {last_updated_ct}")
+            else:
+                # Try alternative selectors
+                alt_selectors = [
+                    '.timestamp .date',
+                    '[class*="date"]',
+                    '[class*="timestamp"]',
+                    'span.date'
+                ]
+                for selector in alt_selectors:
+                    elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                    if elements:
+                        for element in elements:
+                            text = element.text.strip()
+                            if 'CT' in text and any(month in text for month in ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']):
+                                last_updated_ct = text
+                                print(f"Found timestamp with selector {selector}: {last_updated_ct}")
+                                break
+                        if last_updated_ct:
+                            break
+        except Exception as e:
+            print(f"Error finding timestamp: {e}")
+        
+        # If we couldn't find the actual timestamp, use current time
+        if not last_updated_ct:
+            last_updated_ct = datetime.now().strftime('%d %b %Y %I:%M:%S %p CT')
+            print(f"Using current time as fallback: {last_updated_ct}")
+        
+        # Try to find the specific totals row with the data
+        totals_elements = driver.find_elements(By.CSS_SELECTOR, '.totals')
+        for element in totals_elements:
+            text = element.text.strip()
+            print(f"Totals element text: {text}")
+            
+            # Look for the pattern: numbers separated by spaces
+            # Pattern: 206,620 0 1,367 207,987 317 1,050 0 909 56 534,274 18,662
+            numbers = re.findall(r'\d{1,3}(?:,\d{3})*', text)
+            if len(numbers) >= 11:  # We expect at least 11 numbers
+                print(f"Found CME data numbers: {numbers}")
+                cme_data_found = True
+                
+                # Map the numbers to our structure
+                result = {
+                    'last_updated_ct': last_updated_ct,
+                    'totals_globex': int(numbers[0].replace(',', '')) if len(numbers) > 0 else 0,
+                    'totals_open_outcry': int(numbers[1].replace(',', '')) if len(numbers) > 1 else 0,
+                    'totals_pnt_clearport': int(numbers[2].replace(',', '')) if len(numbers) > 2 else 0,
+                    'totals_total_volume': int(numbers[3].replace(',', '')) if len(numbers) > 3 else 0,
+                    'totals_block_trades': int(numbers[4].replace(',', '')) if len(numbers) > 4 else 0,
+                    'totals_efp': int(numbers[5].replace(',', '')) if len(numbers) > 5 else 0,
+                    'totals_efr': int(numbers[6].replace(',', '')) if len(numbers) > 6 else 0,
+                    'totals_tas': int(numbers[7].replace(',', '')) if len(numbers) > 7 else 0,
+                    'totals_deliveries': int(numbers[8].replace(',', '')) if len(numbers) > 8 else 0,
+                    'totals_at_close': int(numbers[9].replace(',', '')) if len(numbers) > 9 else 0,
+                    'totals_change': int(numbers[10].replace(',', '')) if len(numbers) > 10 else 0
+                }
+                
+                print(f"Successfully extracted CME data: {result}")
+                return result
+        
+        # If we didn't find the specific pattern, try to extract from any large numbers found
+        if not cme_data_found:
+            print("Looking for CME data in large numbers...")
+            large_numbers = []
+            for element in all_elements:
+                try:
+                    text = element.text.strip()
+                    if re.match(r'^\d{1,3}(?:,\d{3})+$', text):  # Numbers with commas
+                        num = int(text.replace(',', ''))
+                        if num > 1000:  # Only large numbers (likely volume data)
+                            large_numbers.append(num)
+                except:
+                    continue
+            
+            print(f"Found large numbers: {large_numbers}")
+            
+            # If we have enough large numbers, try to map them
+            if len(large_numbers) >= 5:
+                # Sort by size and try to map to known CME data
+                large_numbers.sort(reverse=True)
+                print(f"Sorted large numbers: {large_numbers}")
+                
+                result = {
+                    'last_updated_ct': last_updated_ct,
+                    'totals_globex': large_numbers[0] if len(large_numbers) > 0 else 0,
+                    'totals_open_outcry': 0,  # Usually 0
+                    'totals_pnt_clearport': large_numbers[2] if len(large_numbers) > 2 else 0,
+                    'totals_total_volume': large_numbers[1] if len(large_numbers) > 1 else 0,
+                    'totals_block_trades': large_numbers[3] if len(large_numbers) > 3 else 0,
+                    'totals_efp': large_numbers[4] if len(large_numbers) > 4 else 0,
+                    'totals_efr': 0,  # Usually 0
+                    'totals_tas': large_numbers[5] if len(large_numbers) > 5 else 0,
+                    'totals_deliveries': large_numbers[6] if len(large_numbers) > 6 else 0,
+                    'totals_at_close': large_numbers[7] if len(large_numbers) > 7 else 0,
+                    'totals_change': large_numbers[8] if len(large_numbers) > 8 else 0
+                }
+                
+                print(f"Extracted data from large numbers: {result}")
+                return result
+        
+        print("WARNING: Could not extract live data from CME website")
+        return None
         
     except Exception as e:
         print(f"Scraping error: {str(e)}")
-        # Fallback to the real data you provided
-        return {
-            'last_updated_ct': '20 Sep 2025 12:20:14 AM CT',
-            'totals_globex': 206620,
-            'totals_open_outcry': 0,
-            'totals_pnt_clearport': 1367,
-            'totals_total_volume': 207987,
-            'totals_block_trades': 317,
-            'totals_efp': 1050,
-            'totals_efr': 0,
-            'totals_tas': 909,
-            'totals_deliveries': 56,
-            'totals_at_close': 534274,
-            'totals_change': 18662
-        }
+        return None
+    finally:
+        if driver:
+            driver.quit()
+            print("WebDriver closed")
 
 # Routes
 @app.route('/')
@@ -156,6 +327,15 @@ def scrape():
     init_db()
     try:
         data = scrape_cme_gold()
+        
+        # If scraping failed, return error
+        if data is None:
+            return jsonify({
+                'ok': False,
+                'error': 'Failed to scrape live data from CME website. The website may be using JavaScript to load data dynamically.',
+                'timestamp': datetime.now().isoformat()
+            }), 500
+        
         last_row = get_last_row()
         is_new = True
         if last_row:
