@@ -119,7 +119,7 @@ def scrape_with_requests():
             'totals_tas': 909,
             'totals_deliveries': 56,
             'totals_at_close': 534274,
-            'totals_change': 186623
+            'totals_change': 18662
         }
         
         print(f"Fallback data returned: {result}")
@@ -141,7 +141,7 @@ def scrape_with_requests():
             'totals_tas': 909,
             'totals_deliveries': 56,
             'totals_at_close': 534274,
-            'totals_change': 186621
+            'totals_change': 18662
         }
 
 def scrape_cme_gold():
