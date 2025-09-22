@@ -225,21 +225,19 @@ def home():
         html += '''
                 <div class="no-data">
                     <h3>No Data Available</h3>
-                    <p><a href="/scrape" style="color: #3498db;">→ Scrape CME Data Now</a></p>
                 </div>
         '''
     
     html += '''
             </div>
         </div>
-        <a href="/scrape" class="refresh-btn">Scrape New Data</a>
     </body>
     </html>
     '''
     
     return html
 
-@app.route('/api/scrape')
+@app.route('/scrape')
 def scrape():
     """Endpoint to trigger scraping"""
     try:
