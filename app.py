@@ -13,6 +13,7 @@ import os
 # Try to import Playwright
 try:
     from playwright.sync_api import sync_playwright
+    import time
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
@@ -71,129 +72,53 @@ def insert_row(data):
     conn.commit()
     conn.close()
 
-def scrape_cme_gold():
-    """Extract REAL data from CME website using advanced Playwright"""
-    if not PLAYWRIGHT_AVAILABLE:
-        raise Exception("Playwright not available - cannot scrape CME website")
-    
+def scrape_with_playwright():
+    """Scrape using Playwright with stealth mode"""
     try:
-        print("🚀 Starting CME scraping with real data extraction...")
         with sync_playwright() as p:
-            # Launch browser with anti-detection
             browser = p.chromium.launch(
                 headless=True,
                 args=[
-                    '--no-sandbox',
-                    '--disable-blink-features=AutomationControlled',
-                    '--disable-web-security',
                     '--disable-dev-shm-usage',
-                    '--no-first-run'
+                    '--disable-gpu',
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-web-security',
+                    '--disable-features=IsolateOrigins,site-per-process',
                 ]
             )
-            
-            # Create realistic context
             context = browser.new_context(
-                user_agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                viewport={'width': 1920, 'height': 1080}
+                viewport={'width': 1920, 'height': 1080},
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36'
             )
-            
             page = context.new_page()
             
-            # Hide webdriver
-            page.evaluate("Object.defineProperty(navigator, 'webdriver', {get: () => undefined,});")
+            # Add headers to look more like a real browser
+            page.set_extra_http_headers({
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'none',
+                'Sec-Fetch-User': '?1',
+            })
             
-            print("📄 Loading CME page...")
-            try:
-                response = page.goto(TARGET_URL, timeout=90000, wait_until='networkidle')
-                print(f"✅ Page loaded: {response.status}")
-            except Exception as goto_error:
-                print(f"⚠️ First attempt failed: {goto_error}")
-                print("🔄 Trying alternative loading method...")
-                try:
-                    response = page.goto(TARGET_URL, timeout=60000, wait_until='load')
-                    print("✅ Page loaded with alternative method")
-                except Exception as e:
-                    browser.close()
-                    raise Exception(f"CME website is blocking access: {str(e)}")
+            # Add a small delay before navigation
+            time.sleep(2)
             
-            # Wait for complete loading
-            page.wait_for_load_state('domcontentloaded')
-            page.wait_for_load_state('load')
-            page.wait_for_load_state('networkidle')
-            page.wait_for_function("() => document.readyState === 'complete'")
-            page.wait_for_timeout(10000)
+            page.goto(TARGET_URL, wait_until='networkidle')
+            # Add another small delay after page load
+            time.sleep(3)
             
-            print("✅ Page fully loaded")
-            
-            # Extract REAL data from the specific div you provided
-            data_type = "Unknown"
-            cme_timestamp = "Unknown"
-            
-            try:
-                # Extract from <div class="data-information">
-                data_info_div = page.query_selector('.data-information')
-                if data_info_div:
-                    print("✅ Found data-information div")
-                    
-                    # Get data type from <h5 class="data-type">
-                    data_type_element = data_info_div.query_selector('h5.data-type')
-                    if data_type_element:
-                        data_type = data_type_element.inner_text().strip()
-                        print(f"📊 REAL Data Type: {data_type}")
-                    
-                    # Get timestamp from <span class="date">
-                    timestamp_element = data_info_div.query_selector('.timestamp .date')
-                    if timestamp_element:
-                        cme_timestamp = timestamp_element.inner_text().strip()
-                        print(f"🕒 REAL CME Timestamp: {cme_timestamp}")
-                else:
-                    print("⚠️ data-information div not found")
-            except Exception as e:
-                print(f"⚠️ Error extracting data-information: {e}")
-            
-            # Extract volume numbers from tables
-            tables = page.query_selector_all('table')
-            print(f"📊 Found {len(tables)} tables")
-            
-            for i, table in enumerate(tables):
-                try:
-                    table_text = table.inner_text()
-                    if 'volume' in table_text.lower():
-                        print(f"🎯 Table {i} has volume data")
-                        
-                        # Extract all numbers
-                        numbers = re.findall(r'\d{1,3}(?:,\d{3})*', table_text)
-                        print(f"📈 Found {len(numbers)} numbers: {numbers[:15]}")
-                        
-                        if len(numbers) >= 11:
-                            result = {
-                                'data_type': data_type,
-                                'cme_timestamp': cme_timestamp,
-                                'totals_globex': int(numbers[0].replace(',', '')),
-                                'totals_open_outcry': int(numbers[1].replace(',', '')),
-                                'totals_pnt_clearport': int(numbers[2].replace(',', '')),
-                                'totals_total_volume': int(numbers[3].replace(',', '')),
-                                'totals_block_trades': int(numbers[4].replace(',', '')),
-                                'totals_efp': int(numbers[5].replace(',', '')),
-                                'totals_efr': int(numbers[6].replace(',', '')),
-                                'totals_tas': int(numbers[7].replace(',', '')),
-                                'totals_deliveries': int(numbers[8].replace(',', '')),
-                                'totals_at_close': int(numbers[9].replace(',', '')),
-                                'totals_change': int(numbers[10].replace(',', ''))
-                            }
-                            print(f"🎉 REAL data extracted: {result}")
-                            browser.close()
-                            return result
-                except Exception as e:
-                    print(f"Error with table {i}: {e}")
-                    continue
-            
+            # Extract the data
+            content = page.content()
             browser.close()
-            raise Exception("Could not extract volume data from any table")
-            
+            return content
     except Exception as e:
-        print(f"❌ Scraping failed: {e}")
-        raise
+        return {'error': str(e), 'ok': False, 'source_url': TARGET_URL, 'timestamp': datetime.now().isoformat()}
 
 @app.route('/')
 def home():
@@ -314,63 +239,27 @@ def home():
     
     return html
 
-@app.route('/scrape')
+@app.route('/api/scrape')
 def scrape():
-    """Scrape REAL CME data and save to database"""
-    init_db()
+    """Endpoint to trigger scraping"""
     try:
-        data = scrape_cme_gold()
+        content = scrape_with_playwright()
+        if isinstance(content, dict) and 'error' in content:
+            return jsonify(content)
+            
+        # Parse the content and extract data
+        # Add your parsing logic here
+        data = {'data_type': 'test', 'cme_timestamp': datetime.now().isoformat()}
         
-        if data is None:
-            return jsonify({
-                'ok': False,
-                'error': 'Failed to extract data from CME website',
-                'timestamp': datetime.now().isoformat()
-            }), 500
-        
-        # Check if data is new
-        last_row = get_last_row()
-        is_new = True
-        if last_row:
-            # Compare with last row (skip id and scraped_at columns)
-            last_data = {
-                'data_type': last_row[1],
-                'cme_timestamp': last_row[2],
-                'totals_globex': last_row[3],
-                'totals_open_outcry': last_row[4],
-                'totals_pnt_clearport': last_row[5],
-                'totals_total_volume': last_row[6],
-                'totals_block_trades': last_row[7],
-                'totals_efp': last_row[8],
-                'totals_efr': last_row[9],
-                'totals_tas': last_row[10],
-                'totals_deliveries': last_row[11],
-                'totals_at_close': last_row[12],
-                'totals_change': last_row[13]
-            }
-            is_new = any(data.get(k) != last_data.get(k) for k in last_data)
-        
-        if is_new:
-            insert_row(data)
-            print("✅ New data inserted into database")
-        else:
-            print("ℹ️ Data unchanged, not inserting duplicate")
-        
-        return jsonify({
-            'ok': True,
-            'data': data,
-            'inserted': is_new,
-            'timestamp': datetime.now().isoformat(),
-            'source_url': TARGET_URL
-        })
-        
+        insert_row(data)
+        return jsonify({'ok': True, 'data': data})
     except Exception as e:
         return jsonify({
-            'ok': False,
             'error': str(e),
-            'timestamp': datetime.now().isoformat(),
-            'source_url': TARGET_URL
-        }), 500
+            'ok': False,
+            'source_url': TARGET_URL,
+            'timestamp': datetime.now().isoformat()
+        })
 
 @app.route('/health')
 def health():
