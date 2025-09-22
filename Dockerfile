@@ -8,11 +8,13 @@ RUN apt-get update && apt-get install -y \
     fonts-liberation fonts-noto-color-emoji \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Playwright dependencies
-RUN playwright install-deps
+# Install Python packages including Playwright
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Install browsers
-RUN playwright install chromium
+# Install Playwright dependencies and browser
+RUN playwright install-deps && \
+    playwright install chromium
 
 WORKDIR /app
 
