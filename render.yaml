@@ -2,6 +2,8 @@ services:
   - type: web
     name: cme-gold-scraper
     env: python
-    buildCommand: pip install -r requirements.txt
+    buildCommand: |
+      pip install -r requirements.txt
+      playwright install
     startCommand: gunicorn app:app
     autoDeploy: true
