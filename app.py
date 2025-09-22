@@ -99,29 +99,39 @@ def scrape_with_playwright():
     try:
         app.logger.info(f'Starting Playwright scraping for URL: {TARGET_URL}')
         with sync_playwright() as p:
-            app.logger.debug('Launching browser')
-            browser = p.chromium.launch(
+            app.logger.debug('Launching Firefox browser')
+            browser = p.firefox.launch(
                 headless=True,
-                args=[
-                    '--disable-dev-shm-usage',
-                    '--disable-gpu',
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-web-security',
-                    '--disable-features=IsolateOrigins,site-per-process',
-                    '--disable-http2',  # Force HTTP/1.1
-                    '--disable-quic',    # Disable QUIC protocol
-                    '--ignore-certificate-errors',
-                    '--proxy-server="direct://"',  # Bypass system proxy
-                    '--no-proxy-server',  # Don't use proxy
-                ]
+                firefox_user_prefs={
+                    # Disable proxy settings
+                    'network.proxy.type': 0,
+                    'network.proxy.http': '',
+                    'network.proxy.http_port': 0,
+                    'network.proxy.ssl': '',
+                    'network.proxy.ssl_port': 0,
+                    'network.proxy.socks': '',
+                    'network.proxy.socks_port': 0,
+                    'network.proxy.ftp': '',
+                    'network.proxy.ftp_port': 0,
+                    # Other useful preferences
+                    'network.http.use-cache': False,
+                    'browser.cache.disk.enable': False,
+                    'browser.cache.memory.enable': False,
+                    'network.http.version': 1  # Force HTTP/1.1
+                }
             )
             app.logger.debug('Browser launched successfully')
 
             app.logger.debug('Creating browser context')
             context = browser.new_context(
                 viewport={'width': 1920, 'height': 1080},
-                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36'
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/117.0',
+                ignore_https_errors=True,
+                proxy=None,  # Explicitly disable proxy
+                java_script_enabled=True,
+                has_touch=False,
+                locale='en-US',
+                timezone_id='America/New_York'
             )
             page = context.new_page()
             app.logger.debug('Browser context created')
@@ -146,17 +156,22 @@ def scrape_with_playwright():
             
             app.logger.info(f'Navigating to {TARGET_URL}')
             try:
-                # First try with domcontentloaded
-                app.logger.info('Attempting navigation with domcontentloaded wait strategy')
+                # Try to navigate with a more lenient strategy
+                app.logger.info('Attempting navigation with commit wait strategy')
                 response = page.goto(
                     TARGET_URL,
-                    wait_until='domcontentloaded',
-                    timeout=30000
+                    wait_until='commit',  # Most basic wait strategy
+                    timeout=60000  # Longer timeout
                 )
                 
-                # Wait for network to be idle
-                app.logger.info('Waiting for network idle')
-                page.wait_for_load_state('networkidle', timeout=30000)
+                app.logger.info('Waiting for page to stabilize...')
+                try:
+                    # Wait for any of these to succeed
+                    page.wait_for_selector('body', timeout=10000)
+                    time.sleep(2)  # Small delay to let things settle
+                except Exception as wait_error:
+                    app.logger.warning(f'Wait for selector timed out: {wait_error}')
+                    # Continue anyway as we might have partial content
                 
                 app.logger.info(f'Navigation complete. Status: {response.status} {response.status_text}')
                 
