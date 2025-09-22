@@ -3,6 +3,8 @@ services:
     name: cme-gold-scraper
     env: python
     buildCommand: |
+      apt-get update
+      apt-get install -y libsoup-3.0-0 libenchant-2-2 libsecret-1-0 libmanette-0.2-0 libgles2 libgstgl-1.0-0 libgstcodecparsers-1.0-0
       pip install -r requirements.txt
       playwright install
     startCommand: gunicorn app:app
