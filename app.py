@@ -382,7 +382,7 @@ def not_found(error):
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     
-    print(f"Starting CME Gold Scrapur on port {port}")
+    print(f"Starting CME Gold Scraper on port {port}")
     print(f"Playwright available: {PLAYWRIGHT_AVAILABLE}")
     print("Available endpoints:")
     print(f"  - http://localhost:{port}/")
