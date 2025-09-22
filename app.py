@@ -9,6 +9,10 @@ import sqlite3
 from datetime import datetime
 import re
 import os
+import logging
+from logging.handlers import RotatingFileHandler
+from collections import deque
+import traceback
 
 # Try to import Playwright
 try:
@@ -20,6 +24,24 @@ except ImportError:
     print("Playwright not available")
 
 app = Flask(__name__)
+
+# Configure logging
+app.config['LOG_LEVEL'] = logging.DEBUG
+app.config['MAX_LOG_ENTRIES'] = 1000  # Keep last 1000 log entries in memory
+
+# In-memory log storage
+log_buffer = deque(maxlen=app.config['MAX_LOG_ENTRIES'])
+
+# Configure file logging
+log_file = 'scraper.log'
+file_handler = RotatingFileHandler(log_file, maxBytes=1024*1024, backupCount=5)
+file_handler.setFormatter(logging.Formatter(
+    '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
+))
+file_handler.setLevel(app.config['LOG_LEVEL'])
+app.logger.addHandler(file_handler)
+app.logger.setLevel(app.config['LOG_LEVEL'])
+app.logger.info('Scraper startup')
 
 # CME Gold Volume URL
 TARGET_URL = 'https://www.cmegroup.com/markets/metals/precious/gold.volume.html'
@@ -73,9 +95,11 @@ def insert_row(data):
     conn.close()
 
 def scrape_with_playwright():
-    """Scrape using Playwright with stealth mode"""
+    """Scrape using Playwright with stealth mode and detailed logging"""
     try:
+        app.logger.info(f'Starting Playwright scraping for URL: {TARGET_URL}')
         with sync_playwright() as p:
+            app.logger.debug('Launching browser')
             browser = p.chromium.launch(
                 headless=True,
                 args=[
@@ -87,14 +111,18 @@ def scrape_with_playwright():
                     '--disable-features=IsolateOrigins,site-per-process',
                 ]
             )
+            app.logger.debug('Browser launched successfully')
+
+            app.logger.debug('Creating browser context')
             context = browser.new_context(
                 viewport={'width': 1920, 'height': 1080},
                 user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36'
             )
             page = context.new_page()
+            app.logger.debug('Browser context created')
             
             # Add headers to look more like a real browser
-            page.set_extra_http_headers({
+            headers = {
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
                 'Accept-Language': 'en-US,en;q=0.9',
                 'Accept-Encoding': 'gzip, deflate, br',
@@ -104,20 +132,45 @@ def scrape_with_playwright():
                 'Sec-Fetch-Mode': 'navigate',
                 'Sec-Fetch-Site': 'none',
                 'Sec-Fetch-User': '?1',
-            })
+            }
+            page.set_extra_http_headers(headers)
+            app.logger.debug(f'Set headers: {headers}')
             
-            # Add a small delay before navigation
+            app.logger.info('Waiting before navigation...')
             time.sleep(2)
             
-            page.goto(TARGET_URL, wait_until='networkidle')
-            # Add another small delay after page load
-            time.sleep(3)
-            
-            # Extract the data
-            content = page.content()
-            browser.close()
-            return content
+            app.logger.info(f'Navigating to {TARGET_URL}')
+            try:
+                response = page.goto(TARGET_URL, wait_until='networkidle', timeout=30000)
+                app.logger.info(f'Navigation complete. Status: {response.status} {response.status_text}')
+                
+                if response.ok:
+                    app.logger.info('Page loaded successfully')
+                else:
+                    app.logger.error(f'Page load failed with status {response.status}')
+                    return {'error': f'Page load failed: {response.status} {response.status_text}', 'ok': False}
+                
+                app.logger.info('Waiting after navigation...')
+                time.sleep(3)
+                
+                app.logger.debug('Extracting page content')
+                content = page.content()
+                app.logger.info('Content extracted successfully')
+                
+                # Log response headers
+                headers = response.all_headers()
+                app.logger.debug(f'Response headers: {headers}')
+                
+                browser.close()
+                app.logger.info('Browser closed')
+                return content
+                
+            except Exception as nav_error:
+                app.logger.error(f'Navigation error: {str(nav_error)}\n{traceback.format_exc()}')
+                return {'error': str(nav_error), 'ok': False, 'source_url': TARGET_URL, 'timestamp': datetime.now().isoformat()}
+                
     except Exception as e:
+        app.logger.error(f'Scraping error: {str(e)}\n{traceback.format_exc()}')
         return {'error': str(e), 'ok': False, 'source_url': TARGET_URL, 'timestamp': datetime.now().isoformat()}
 
 @app.route('/')
@@ -268,11 +321,62 @@ def health():
     })
 
 # Error handlers
+@app.route('/log')
+def view_logs():
+    """View application logs"""
+    try:
+        # Get the last 100 lines from the log file
+        with open('scraper.log', 'r') as f:
+            logs = f.readlines()[-100:]
+        
+        # Format logs as HTML
+        html = '''
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Scraper Logs</title>
+            <style>
+                body { font-family: monospace; padding: 20px; background: #f5f5f5; }
+                .log-container { background: white; padding: 20px; border-radius: 5px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+                .log-entry { margin: 5px 0; padding: 5px; border-bottom: 1px solid #eee; }
+                .error { color: #e74c3c; }
+                .warning { color: #f39c12; }
+                .info { color: #2980b9; }
+                .debug { color: #27ae60; }
+            </style>
+        </head>
+        <body>
+            <div class="log-container">
+                <h2>Recent Logs</h2>
+                <pre>
+        '''
+        
+        for log in logs:
+            if 'ERROR' in log:
+                html += f'<div class="log-entry error">{log}</div>'
+            elif 'WARNING' in log:
+                html += f'<div class="log-entry warning">{log}</div>'
+            elif 'INFO' in log:
+                html += f'<div class="log-entry info">{log}</div>'
+            else:
+                html += f'<div class="log-entry debug">{log}</div>'
+        
+        html += '''
+                </pre>
+            </div>
+        </body>
+        </html>
+        '''
+        
+        return html
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.errorhandler(404)
 def not_found(error):
     return jsonify({
         'error': 'Endpoint not found',
-        'available_endpoints': ['/', '/scrape', '/health']
+        'available_endpoints': ['/', '/scrape', '/log', '/health']
     }), 404
 
 if __name__ == '__main__':
