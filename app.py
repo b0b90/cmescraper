@@ -109,6 +109,11 @@ def scrape_with_playwright():
                     '--disable-setuid-sandbox',
                     '--disable-web-security',
                     '--disable-features=IsolateOrigins,site-per-process',
+                    '--disable-http2',  # Force HTTP/1.1
+                    '--disable-quic',    # Disable QUIC protocol
+                    '--ignore-certificate-errors',
+                    '--proxy-server="direct://"',  # Bypass system proxy
+                    '--no-proxy-server',  # Don't use proxy
                 ]
             )
             app.logger.debug('Browser launched successfully')
@@ -141,7 +146,18 @@ def scrape_with_playwright():
             
             app.logger.info(f'Navigating to {TARGET_URL}')
             try:
-                response = page.goto(TARGET_URL, wait_until='networkidle', timeout=30000)
+                # First try with domcontentloaded
+                app.logger.info('Attempting navigation with domcontentloaded wait strategy')
+                response = page.goto(
+                    TARGET_URL,
+                    wait_until='domcontentloaded',
+                    timeout=30000
+                )
+                
+                # Wait for network to be idle
+                app.logger.info('Waiting for network idle')
+                page.wait_for_load_state('networkidle', timeout=30000)
+                
                 app.logger.info(f'Navigation complete. Status: {response.status} {response.status_text}')
                 
                 if response.ok:
